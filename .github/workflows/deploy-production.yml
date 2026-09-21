@@ -5,6 +5,12 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      include_database_image:
+        description: Include the pinned MariaDB image for a fresh-server bootstrap
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -22,6 +28,8 @@ jobs:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
       DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
       DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DATABASE_IMAGE: mariadb:11.4
+      INCLUDE_DATABASE_IMAGE: ${{ inputs.include_database_image || false }}
 
     steps:
       - name: Check out source
@@ -37,14 +45,16 @@ jobs:
         run: go test ./...
 
       - name: Build production image
-        run: |
-          docker build --tag "rogueserver:${GITHUB_SHA}" .
-          docker pull mariadb:11.4
+        run: docker build --tag "rogueserver:${GITHUB_SHA}" .
 
       - name: Export release images
         run: |
-          docker save "rogueserver:${GITHUB_SHA}" mariadb:11.4 \
-            | gzip -6 > "rogueserver-${GITHUB_SHA}.tar.gz"
+          images=("rogueserver:${GITHUB_SHA}")
+          if [[ "$INCLUDE_DATABASE_IMAGE" == "true" ]]; then
+            docker pull "$DATABASE_IMAGE"
+            images+=("$DATABASE_IMAGE")
+          fi
+          docker save "${images[@]}" | gzip -6 > "rogueserver-${GITHUB_SHA}.tar.gz"
 
       - name: Configure SSH
         env:
