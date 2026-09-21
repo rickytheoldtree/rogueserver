@@ -46,6 +46,21 @@ rollback() {
 trap rollback ERR
 
 compose up -d db
+
+db_healthy=0
+for _ in $(seq 1 60); do
+  if [[ $(docker inspect --format '{{.State.Health.Status}}' rogueserver-db 2>/dev/null || true) == healthy ]]; then
+    db_healthy=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ $db_healthy -ne 1 ]]; then
+  docker logs --tail 100 rogueserver-db >&2 || true
+  false
+fi
+
 compose up -d --no-deps server
 
 healthy=0
@@ -68,4 +83,3 @@ rm -f "$archive"
 
 docker image prune --force --filter 'until=168h' >/dev/null
 echo "deployed ${image}"
-

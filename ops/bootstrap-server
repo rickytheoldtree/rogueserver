@@ -71,6 +71,12 @@ if [[ ! -f ${root_dir}/shared/release.env ]]; then
   chmod 600 "${root_dir}/shared/release.env"
 fi
 
+if [[ ! -f ${root_dir}/shared/secret.key ]]; then
+  openssl rand -out "${root_dir}/shared/secret.key" 32
+  chown 65532:65532 "${root_dir}/shared/secret.key"
+  chmod 400 "${root_dir}/shared/secret.key"
+fi
+
 if [[ ! -f /swapfile ]]; then
   fallocate -l 2G /swapfile
   chmod 600 /swapfile
@@ -89,4 +95,3 @@ systemctl daemon-reload
 systemctl enable rogueserver-backup.timer >/dev/null
 
 echo "server bootstrap completed"
-

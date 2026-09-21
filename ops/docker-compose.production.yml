@@ -10,8 +10,11 @@ services:
         condition: service_healthy
     networks:
       - internal
+      - edge
     ports:
       - "127.0.0.1:8001:8001"
+    volumes:
+      - /srv/rogueserver/shared/secret.key:/app/secret.key:ro
     read_only: true
     tmpfs:
       - /tmp:size=16m,mode=1777
@@ -65,4 +68,5 @@ networks:
   internal:
     name: rogueserver-internal
     internal: true
-
+  edge:
+    name: rogueserver-edge
