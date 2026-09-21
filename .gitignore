@@ -2,6 +2,7 @@
 # no extension on linux, .exe on windows
 rogueserver*
 !/rogueserver/*
+!/rogueserver_test.go
 /userdata/*
 secret.key
 
