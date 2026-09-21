@@ -37,10 +37,14 @@ jobs:
         run: go test ./...
 
       - name: Build production image
-        run: docker build --tag "rogueserver:${GITHUB_SHA}" .
+        run: |
+          docker build --tag "rogueserver:${GITHUB_SHA}" .
+          docker pull mariadb:11.4
 
-      - name: Export image
-        run: docker save "rogueserver:${GITHUB_SHA}" | gzip -9 > "rogueserver-${GITHUB_SHA}.tar.gz"
+      - name: Export release images
+        run: |
+          docker save "rogueserver:${GITHUB_SHA}" mariadb:11.4 \
+            | gzip -6 > "rogueserver-${GITHUB_SHA}.tar.gz"
 
       - name: Configure SSH
         env:
@@ -63,4 +67,3 @@ jobs:
           ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
             "${DEPLOY_USER}@${DEPLOY_HOST}" \
             "sudo /usr/local/sbin/deploy-rogueserver '${GITHUB_SHA}'"
-
