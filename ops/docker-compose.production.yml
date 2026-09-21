@@ -1,0 +1,68 @@
+services:
+  server:
+    image: ${ROGUESERVER_IMAGE}
+    container_name: rogueserver
+    restart: unless-stopped
+    env_file:
+      - ./server.env
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - internal
+    ports:
+      - "127.0.0.1:8001:8001"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    user: "65532:65532"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 768m
+    cpus: 1.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  db:
+    image: mariadb:11.4
+    container_name: rogueserver-db
+    restart: unless-stopped
+    env_file:
+      - ./database.env
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=384M
+      - --max-connections=80
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--su-mysql", "--connect", "--innodb_initialized"]
+      start_period: 30s
+      interval: 30s
+      timeout: 5s
+      retries: 6
+    volumes:
+      - /srv/rogueserver/database:/var/lib/mysql
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.5
+    logging:
+      driver: json-file
+      options:
+        max-size: 20m
+        max-file: "3"
+
+networks:
+  internal:
+    name: rogueserver-internal
+    internal: true
+

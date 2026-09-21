@@ -1,0 +1,66 @@
+name: Deploy production backend
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rogueserver-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Test, build, and deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build production image
+        run: docker build --tag "rogueserver:${GITHUB_SHA}" .
+
+      - name: Export image
+        run: docker save "rogueserver:${GITHUB_SHA}" | gzip -9 > "rogueserver-${GITHUB_SHA}.tar.gz"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_HOST_KEY: ${{ secrets.DEPLOY_HOST_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_HOST_KEY" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/deploy_key ~/.ssh/known_hosts
+
+      - name: Upload release image
+        run: |
+          scp -i ~/.ssh/deploy_key -P "$DEPLOY_PORT" \
+            "rogueserver-${GITHUB_SHA}.tar.gz" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/srv/rogueserver/releases/${GITHUB_SHA}.tar.gz"
+
+      - name: Activate release
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "sudo /usr/local/sbin/deploy-rogueserver '${GITHUB_SHA}'"
+

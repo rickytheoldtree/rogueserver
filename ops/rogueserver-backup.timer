@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Pokerogue database backup every day
+
+[Timer]
+OnCalendar=*-*-* 03:20:00
+RandomizedDelaySec=20m
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

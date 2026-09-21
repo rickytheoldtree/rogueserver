@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  echo "bootstrap-server must run as root" >&2
+  exit 77
+fi
+
+readonly deploy_user=rogueserver-deploy
+readonly root_dir=/srv/rogueserver
+readonly source_dir=${1:-/tmp/rogueserver-bootstrap}
+readonly public_key_file=${source_dir}/rogueserver_github_actions.pub
+
+for required in \
+  "$public_key_file" \
+  "${source_dir}/docker-compose.production.yml" \
+  "${source_dir}/deploy-rogueserver" \
+  "${source_dir}/backup-rogueserver" \
+  "${source_dir}/rogueserver-backup.service" \
+  "${source_dir}/rogueserver-backup.timer"; do
+  [[ -f $required ]] || { echo "missing ${required}" >&2; exit 66; }
+done
+
+if ! id "$deploy_user" >/dev/null 2>&1; then
+  useradd --create-home --shell /bin/bash "$deploy_user"
+fi
+
+install -d -m 755 "$root_dir" "${root_dir}/shared"
+install -d -m 750 "${root_dir}/database" "${root_dir}/backups"
+install -d -o "$deploy_user" -g "$deploy_user" -m 750 "${root_dir}/releases"
+install -d -o "$deploy_user" -g "$deploy_user" -m 700 "/home/${deploy_user}/.ssh"
+
+public_key=$(<"$public_key_file")
+printf 'restrict %s\n' "$public_key" > "/home/${deploy_user}/.ssh/authorized_keys"
+chown "$deploy_user:$deploy_user" "/home/${deploy_user}/.ssh/authorized_keys"
+chmod 600 "/home/${deploy_user}/.ssh/authorized_keys"
+
+install -o root -g root -m 644 \
+  "${source_dir}/docker-compose.production.yml" \
+  "${root_dir}/shared/docker-compose.yml"
+install -o root -g root -m 755 \
+  "${source_dir}/deploy-rogueserver" \
+  /usr/local/sbin/deploy-rogueserver
+install -o root -g root -m 755 \
+  "${source_dir}/backup-rogueserver" \
+  /usr/local/sbin/backup-rogueserver
+install -o root -g root -m 644 \
+  "${source_dir}/rogueserver-backup.service" \
+  /etc/systemd/system/rogueserver-backup.service
+install -o root -g root -m 644 \
+  "${source_dir}/rogueserver-backup.timer" \
+  /etc/systemd/system/rogueserver-backup.timer
+
+printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/deploy-rogueserver *\n' \
+  "$deploy_user" > /etc/sudoers.d/rogueserver-deploy
+chmod 440 /etc/sudoers.d/rogueserver-deploy
+visudo --check --file=/etc/sudoers.d/rogueserver-deploy >/dev/null
+
+if [[ ! -f ${root_dir}/shared/database.env ]]; then
+  root_password=$(openssl rand -hex 32)
+  app_password=$(openssl rand -hex 32)
+  umask 077
+  printf 'MYSQL_ROOT_PASSWORD=%s\nMYSQL_DATABASE=pokeroguedb\nMYSQL_USER=pokerogue\nMYSQL_PASSWORD=%s\n' \
+    "$root_password" "$app_password" > "${root_dir}/shared/database.env"
+  printf 'debug=false\naddr=0.0.0.0:8001\ndbaddr=db\ndbuser=pokerogue\ndbpass=%s\ndbname=pokeroguedb\ngameurl=https://game.r117.fun\ncallbackurl=https://api.r117.fun\n' \
+    "$app_password" > "${root_dir}/shared/server.env"
+fi
+
+if [[ ! -f ${root_dir}/shared/release.env ]]; then
+  printf 'ROGUESERVER_IMAGE=rogueserver:bootstrap\n' > "${root_dir}/shared/release.env"
+  chmod 600 "${root_dir}/shared/release.env"
+fi
+
+if [[ ! -f /swapfile ]]; then
+  fallocate -l 2G /swapfile
+  chmod 600 /swapfile
+  mkswap /swapfile >/dev/null
+fi
+
+if ! swapon --show=NAME --noheadings | grep -Fxq /swapfile; then
+  swapon /swapfile
+fi
+
+if ! grep -Eq '^/swapfile[[:space:]]' /etc/fstab; then
+  printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
+fi
+
+systemctl daemon-reload
+systemctl enable rogueserver-backup.timer >/dev/null
+
+echo "server bootstrap completed"
+

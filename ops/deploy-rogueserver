@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+readonly root_dir=/srv/rogueserver
+readonly shared_dir="${root_dir}/shared"
+readonly compose_file="${shared_dir}/docker-compose.yml"
+readonly release_env="${shared_dir}/release.env"
+
+if [[ $# -ne 1 || ! $1 =~ ^[0-9a-f]{40}$ ]]; then
+  echo "usage: deploy-rogueserver <40-character commit SHA>" >&2
+  exit 64
+fi
+
+readonly revision=$1
+readonly archive="${root_dir}/releases/${revision}.tar.gz"
+readonly image="rogueserver:${revision}"
+
+if [[ ! -f $archive ]]; then
+  echo "release archive not found: ${archive}" >&2
+  exit 66
+fi
+
+gzip -t "$archive"
+gzip -dc "$archive" | docker load
+docker image inspect "$image" >/dev/null
+
+previous_image=$(docker inspect --format '{{.Config.Image}}' rogueserver 2>/dev/null || true)
+printf 'ROGUESERVER_IMAGE=%s\n' "$image" > "${release_env}.tmp"
+chmod 600 "${release_env}.tmp"
+mv -f "${release_env}.tmp" "$release_env"
+
+compose() {
+  docker compose --project-name rogueserver --env-file "$release_env" --file "$compose_file" "$@"
+}
+
+rollback() {
+  if [[ -n $previous_image ]]; then
+    echo "deployment failed; rolling back to ${previous_image}" >&2
+    printf 'ROGUESERVER_IMAGE=%s\n' "$previous_image" > "${release_env}.tmp"
+    chmod 600 "${release_env}.tmp"
+    mv -f "${release_env}.tmp" "$release_env"
+    compose up -d --no-deps server
+  fi
+}
+
+trap rollback ERR
+
+compose up -d db
+compose up -d --no-deps server
+
+healthy=0
+for _ in $(seq 1 30); do
+  if curl --fail --silent --show-error --max-time 3 \
+    http://127.0.0.1:8001/game/titlestats >/dev/null; then
+    healthy=1
+    break
+  fi
+  sleep 2
+done
+
+if [[ $healthy -ne 1 ]]; then
+  docker logs --tail 100 rogueserver >&2 || true
+  false
+fi
+
+trap - ERR
+rm -f "$archive"
+
+docker image prune --force --filter 'until=168h' >/dev/null
+echo "deployed ${image}"
+

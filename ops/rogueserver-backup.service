@@ -1,0 +1,9 @@
+[Unit]
+Description=Back up the Pokerogue MariaDB database
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/backup-rogueserver
+
